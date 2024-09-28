@@ -106,7 +106,9 @@ func upgradeV1(tx *sql.Tx, _ *Container) error {
 
 		platform      TEXT NOT NULL DEFAULT '',
 		business_name TEXT NOT NULL DEFAULT '',
-		push_name     TEXT NOT NULL DEFAULT ''
+		push_name     TEXT NOT NULL DEFAULT '',
+		
+		ref_id TEXT NOT NULL UNIQUE
 	)`)
 	if err != nil {
 		return err

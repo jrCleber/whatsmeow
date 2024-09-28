@@ -135,6 +135,7 @@ type Device struct {
 	RegistrationID uint32
 	AdvSecretKey   []byte
 
+	RefID     string
 	ID           *types.JID
 	Account      *waProto.ADVSignedDeviceIdentity
 	Platform     string

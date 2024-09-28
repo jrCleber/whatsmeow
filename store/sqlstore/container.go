@@ -17,7 +17,6 @@ import (
 
 	waProto "go.mau.fi/whatsmeow/binary/proto"
 	"go.mau.fi/whatsmeow/store"
-	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/util/keys"
 	waLog "go.mau.fi/whatsmeow/util/log"
 )
@@ -85,14 +84,14 @@ func NewWithDB(db *sql.DB, dialect string, log waLog.Logger) *Container {
 }
 
 const getAllDevicesQuery = `
-SELECT jid, registration_id, noise_key, identity_key,
+SELECT ref_id, jid, registration_id, noise_key, identity_key,
        signed_pre_key, signed_pre_key_id, signed_pre_key_sig,
        adv_key, adv_details, adv_account_sig, adv_account_sig_key, adv_device_sig,
        platform, business_name, push_name, facebook_uuid
 FROM whatsmeow_device
 `
 
-const getDeviceQuery = getAllDevicesQuery + " WHERE jid=$1"
+const getDeviceQuery = getAllDevicesQuery + " WHERE jid=$1 OR ref_id=$1"
 
 type scannable interface {
 	Scan(dest ...interface{}) error
@@ -108,6 +107,7 @@ func (c *Container) scanDevice(row scannable) (*store.Device, error) {
 	var fbUUID uuid.NullUUID
 
 	err := row.Scan(
+		&device.RefID,
 		&device.ID, &device.RegistrationID, &noisePriv, &identityPriv,
 		&preKeyPriv, &device.SignedPreKey.KeyID, &preKeySig,
 		&device.AdvSecretKey, &account.Details, &account.AccountSignature, &account.AccountSignatureKey, &account.DeviceSignature,
@@ -168,7 +168,7 @@ func (c *Container) GetFirstDevice() (*store.Device, error) {
 		return nil, err
 	}
 	if len(devices) == 0 {
-		return c.NewDevice(), nil
+		return c.NewDevice(uuid.NewString()), nil
 	} else {
 		return devices[0], nil
 	}
@@ -179,8 +179,8 @@ func (c *Container) GetFirstDevice() (*store.Device, error) {
 // If the device is not found, nil is returned instead.
 //
 // Note that the parameter usually must be an AD-JID.
-func (c *Container) GetDevice(jid types.JID) (*store.Device, error) {
-	sess, err := c.scanDevice(c.db.QueryRow(getDeviceQuery, jid))
+func (c *Container) GetDevice(query string) (*store.Device, error) {
+	sess, err := c.scanDevice(c.db.QueryRow(getDeviceQuery, query))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -189,25 +189,27 @@ func (c *Container) GetDevice(jid types.JID) (*store.Device, error) {
 
 const (
 	insertDeviceQuery = `
-		INSERT INTO whatsmeow_device (jid, registration_id, noise_key, identity_key,
+		INSERT INTO whatsmeow_device (ref_id, jid, registration_id, noise_key, identity_key,
 									  signed_pre_key, signed_pre_key_id, signed_pre_key_sig,
 									  adv_key, adv_details, adv_account_sig, adv_account_sig_key, adv_device_sig,
 									  platform, business_name, push_name, facebook_uuid)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
 		ON CONFLICT (jid) DO UPDATE
 		    SET platform=excluded.platform, business_name=excluded.business_name, push_name=excluded.push_name
 	`
-	deleteDeviceQuery = `DELETE FROM whatsmeow_device WHERE jid=$1`
+	deleteDeviceQuery = `DELETE FROM whatsmeow_device WHERE jid=$1 or ref_id=$1`
 )
 
 // NewDevice creates a new device in this database.
 //
 // No data is actually stored before Save is called. However, the pairing process will automatically
 // call Save after a successful pairing, so you most likely don't need to call it yourself.
-func (c *Container) NewDevice() *store.Device {
+func (c *Container) NewDevice(id string) *store.Device {
 	device := &store.Device{
 		Log:       c.log,
 		Container: c,
+
+		RefID: id,
 
 		DatabaseErrorHandler: c.DatabaseErrorHandler,
 
@@ -238,6 +240,7 @@ func (c *Container) PutDevice(device *store.Device) error {
 		return ErrDeviceIDMustBeSet
 	}
 	_, err := c.db.Exec(insertDeviceQuery,
+		device.RefID,
 		device.ID.String(), device.RegistrationID, device.NoiseKey.Priv[:], device.IdentityKey.Priv[:],
 		device.SignedPreKey.Priv[:], device.SignedPreKey.KeyID, device.SignedPreKey.Signature[:],
 		device.AdvSecretKey, device.Account.Details, device.Account.AccountSignature, device.Account.AccountSignatureKey, device.Account.DeviceSignature,
